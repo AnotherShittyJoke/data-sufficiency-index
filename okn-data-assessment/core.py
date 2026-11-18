@@ -11,9 +11,11 @@ import uuid
 import logging
 
 REQUIRED = ["object_id", "name", "historical_name", "address", "region", "city", "latitude", "longitude", "object_type", "heritage_category", "dating", "protection_status", "area", "building_info", "land_info", "technical_condition", "subject_of_protection", "legal_restrictions", "current_use", "urban_context", "transport_access", "available_premises", "owner_info", "source", "publication_date", "acquired_at", "last_verified_at", "record_status", "duplicate_group"]
-OPTIONAL = ["photo_url", "verification_status", "source_date", "style_or_function", "function", "photo_search_url", "restoration_status", "restoration_date", "emergency_status", "conservation_required", "ownership_type", "vacancy_status", "distance_to_nearest_stop", "distance_to_main_road", "distance_to_city_center", "count_social_objects_500m", "count_commercial_objects_500m", "count_tourism_objects_1000m"]
+OPTIONAL = ["photo_url", "verification_status", "source_date", "style_or_function", "function", "photo_search_url", "restoration_status", "restoration_date", "emergency_status", "conservation_required", "ownership_type", "vacancy_status", "distance_to_nearest_stop", "distance_to_main_road", "distance_to_city_center", "count_social_objects_500m", "count_commercial_objects_500m", "count_tourism_objects_1000m", "engineering_information", "recent_repair", "recent_restoration", "territorial_zone", "permitted_use", "functional_zone", "heritage_zone_overlap", "protection_zone_overlap", "surrounding_land_use", "engineering_access", "urban_constraints", "land_use_mix_500m", "investment_project", "auction_status", "recent_use_evidence", "operating_status", "land_availability", "infrastructure_access", "tourism_access", "legal_document", "legal_document_date", "effective_date", "territory_boundary", "protection_zone", "restoration_evidence", "restoration_confidence", "last_update"]
 GROUPS = {"technical": ["technical_condition", "area", "building_info", "restoration_status"], "legal": ["protection_status", "heritage_category", "subject_of_protection", "legal_restrictions"], "urban": ["urban_context", "transport_access", "land_info"], "investment": ["current_use", "available_premises", "owner_info"]}
 DEFAULT_WEIGHTS = {"technical": .25, "legal": .25, "urban": .20, "investment": .15, "provenance": .15}
+RESTORATION_STATUSES = ("restored_and_operating", "restored_but_use_unknown", "partially_restored", "under_restoration", "not_restored", "vacant", "conserved", "emergency", "unknown")
+FUNCTION_PROFILES = {"музей": ("heritage_category", "subject_of_protection", "technical_condition", "area", "current_use", "tourism_access"), "выставочное пространство": ("subject_of_protection", "area", "technical_condition", "current_use", "tourism_access"), "культурный центр": ("current_use", "area", "technical_condition", "infrastructure_access", "legal_restrictions"), "туристический объект": ("heritage_category", "technical_condition", "tourism_access", "current_use", "transport_access"), "гостиница или хостел": ("area", "engineering_information", "transport_access", "legal_restrictions", "current_use"), "ресторан или кафе": ("area", "engineering_information", "current_use", "legal_restrictions", "infrastructure_access"), "офис": ("area", "current_use", "engineering_information", "legal_restrictions"), "смешанное использование": ("area", "technical_condition", "current_use", "legal_restrictions", "infrastructure_access")}
 FRESHNESS_DAYS = {"technical": 730, "legal": 365, "urban": 730, "investment": 180, "coordinates": 1095}
 
 def filter_pskov_city(df):
@@ -23,7 +25,18 @@ def filter_pskov_city(df):
     address = x['address'].astype(str).str.casefold()
     explicit_city = city.str.contains('псков', na=False)
     address_city = address.str.contains(r'г\.?\s*псков|город\s+псков', regex=True, na=False)
-    return x[explicit_city | address_city].copy()
+    return exclude_requested_categories(x[explicit_city | address_city].copy())
+
+EXCLUDED_CATEGORY_RE = re.compile(r"археолог|культов|церкв|храм|монастыр|часовн|собор|мечет|синагог|капелл|мемориал|братск.*(?:могил|кладбищ)|могил|захорон|воин|войн", re.I)
+
+def exclude_requested_categories(df):
+    """Remove archaeology, religious and memorial objects from the working catalogue."""
+    if df.empty:
+        return df.copy()
+    object_type = df['object_type'] if 'object_type' in df.columns else pd.Series('', index=df.index)
+    name = df['name'] if 'name' in df.columns else pd.Series('', index=df.index)
+    text = object_type.fillna('').astype(str) + ' ' + name.fillna('').astype(str)
+    return df[~text.str.contains(EXCLUDED_CATEGORY_RE, na=False)].copy()
 
 SOURCE_REGISTRY = [
     {"source_id": "egrkn", "title": "ЕГРОКН Минкультуры России", "url": "https://opendata.mkrf.ru/opendata/7705851331-egrkn/", "source_type": "registry", "authority_level": "official"},
@@ -34,6 +47,11 @@ SOURCE_REGISTRY = [
     {"source_id": "torgi", "title": "ГИС Торги", "url": "https://torgi.gov.ru/", "source_type": "auction", "authority_level": "official"},
     {"source_id": "publication", "title": "Официальное опубликование правовых актов", "url": "http://publication.pravo.gov.ru/", "source_type": "legal", "authority_level": "official"},
 ]
+
+for _source in SOURCE_REGISTRY:
+    _source.setdefault("source_level", "official" if _source["authority_level"] == "official" else "semi_official")
+    _source.setdefault("coverage", "Псков и объекты культурного наследия")
+    _source.setdefault("limitations", "Автоматический результат требует проверки")
 
 def load_sources(path='sources.csv'):
     target = Path(path)
@@ -274,6 +292,8 @@ def calculate(df, weights=None):
         age = (pd.Timestamp.now() - date.tz_localize(None)).days if pd.notna(date) else None
         actuality = 0.0 if age is None else max(0.0, min(1.0, 1.0 - age / 730))
         source_quality = 1.0 if present["source"] else 0.0
+        source_text = str(r["source"]).casefold()
+        if source_quality: source_quality = 1.0 if any(k in source_text for k in ("егрокн", "официаль", "мкрф", "комитет")) else .5
         consistency = 0.0 if (present["latitude"] ^ present["longitude"]) else 1.0
         overall = 100 * (0.25*scores["technical"] + 0.25*scores["legal"] + 0.20*scores["urban"] + 0.15*scores["investment"] + 0.15*source_quality)
         overall *= (0.65 + 0.35*actuality) * consistency
@@ -287,7 +307,16 @@ def calculate(df, weights=None):
         if present["available_premises"]: opportunities.append("есть доступные помещения")
         if present["current_use"] and str(r["current_use"]).casefold() in ("не используется", "свободно", "не эксплуатируется"): opportunities.append("возможна новая функция")
         if scores["urban"] >= .5: opportunities.append("достаточные градостроительные сведения")
-        rows.append({"object_id": r["object_id"], "name": r["name"], "assessment_index": round(overall, 1), "overall_data_index": round(overall, 1), "index_status": status, "technical_score": round(scores["technical"]*100, 1), "legal_score": round(scores["legal"]*100, 1), "urban_score": round(scores["urban"]*100, 1), "investment_score": round(scores["investment"]*100, 1), "completeness_score": round(completeness*100, 1), "actuality_score": round(actuality*100, 1), "consistency_score": round(consistency*100, 1), "source_quality_score": round(source_quality*100, 1), "completeness": round(completeness*100, 1), "actuality": round(actuality*100, 1), "uncertainty": round((1-completeness)*100, 1), "potential": round(overall, 1) if not missing else None, "missing": ", ".join(missing), "threats": threats, "opportunities": opportunities})
+        restoration = str(r.get("restoration_status")) if present.get("restoration_status") else "unknown"
+        if restoration not in RESTORATION_STATUSES: restoration = "unknown"
+        use = str(r.get("current_use")) if present.get("current_use") else ""
+        use = use.casefold()
+        if restoration == "unknown" and use and use not in ("не используется", "свободно", "не эксплуатируется"): restoration = "restored_but_use_unknown"
+        potentials = {}
+        for function, fields in FUNCTION_PROFILES.items():
+            score = sum(present.get(field, False) for field in fields) / len(fields)
+            potentials[function] = round(max(0, min(100, score * 100 * (.7 + .3 * actuality) * consistency)), 1)
+        rows.append({"object_id": r["object_id"], "name": r["name"], "assessment_index": round(overall, 1), "overall_data_index": round(overall, 1), "index_status": status, "technical_score": round(scores["technical"]*100, 1), "legal_score": round(scores["legal"]*100, 1), "urban_score": round(scores["urban"]*100, 1), "investment_score": round(scores["investment"]*100, 1), "completeness_score": round(completeness*100, 1), "actuality_score": round(actuality*100, 1), "consistency_score": round(consistency*100, 1), "source_quality_score": round(source_quality*100, 1), "completeness": round(completeness*100, 1), "actuality": round(actuality*100, 1), "uncertainty": round((1-completeness)*100, 1), "potential": round(overall, 1) if not missing else None, "function_potential": potentials, "restoration_status": restoration, "missing": ", ".join(missing), "threats": threats, "opportunities": opportunities})
     return pd.DataFrame(rows)
 
 def apply_updates(df, selected_id, updates):
@@ -321,13 +350,14 @@ def collect_object(df, object_id, radius=0.002, timeout=30):
     for field, value in row.items():
         if field == 'object_id' or not _filled(value):
             continue
-        records.append({'value_id': f"{object_id}:{field}:egrkn", 'object_id': object_id, 'field_name': field, 'value': value, 'source_id': 'egrkn', 'source_url': row.get('photo_url', ''), 'document_title': 'ЕГРОКН', 'document_date': row.get('publication_date', ''), 'acquired_at': datetime.now(timezone.utc).isoformat(), 'verification_status': 'official_registry', 'confidence': 1.0, 'is_current': True, 'comment': 'Базовое значение ЕГРОКН'})
+        records.append({'value_id': f"{object_id}:{field}:egrkn", 'object_id': object_id, 'field_name': field, 'value': value, 'source_id': 'egrkn', 'source_url': row.get('photo_url', '') or SOURCE_REGISTRY[0]['url'], 'source_title': 'ЕГРОКН Минкультуры России', 'document_title': 'ЕГРОКН', 'document_date': row.get('publication_date', ''), 'acquired_at': datetime.now(timezone.utc).isoformat(), 'extracted_text': f'{field}: {value}', 'verification_status': 'official_registry', 'confidence': 1.0, 'is_current': True, 'comment': 'Базовое значение ЕГРОКН'})
     osm = pd.DataFrame()
     try:
         lat, lon = float(row['latitude']), float(row['longitude'])
         osm = pd.DataFrame()
         last_error = None
-        for endpoint in ('https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'):
+        endpoints = ('https://overpass-api.de/api/interpreter',) if timeout <= 2 else ('https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter')
+        for endpoint in endpoints:
             try:
                 osm = fetch_overpass((lat-radius, lon-radius, lat+radius, lon+radius), endpoint=endpoint, timeout=timeout)
                 break
@@ -338,7 +368,7 @@ def collect_object(df, object_id, radius=0.002, timeout=30):
         for _, found in osm.iterrows():
             for field in ('name','address','latitude','longitude','object_type'):
                 if _filled(found.get(field)):
-                    records.append({'value_id': f"{object_id}:{field}:osm:{found['object_id']}", 'object_id': object_id, 'field_name': field, 'value': found[field], 'source_id': 'osm', 'source_url': 'https://www.openstreetmap.org/', 'document_title': 'OpenStreetMap / Overpass', 'document_date': '', 'acquired_at': datetime.now(timezone.utc).isoformat(), 'verification_status': 'auxiliary', 'confidence': 0.5, 'is_current': True, 'comment': 'Вспомогательное пространственное значение'})
+                    records.append({'value_id': f"{object_id}:{field}:osm:{found['object_id']}", 'object_id': object_id, 'field_name': field, 'value': found[field], 'source_id': 'osm', 'source_url': 'https://www.openstreetmap.org/', 'source_title': 'OpenStreetMap / Overpass', 'document_title': 'OpenStreetMap / Overpass', 'document_date': '', 'acquired_at': datetime.now(timezone.utc).isoformat(), 'extracted_text': f'{field}: {found[field]}', 'verification_status': 'auxiliary', 'confidence': 0.5, 'is_current': True, 'comment': 'Вспомогательное пространственное значение'})
     except Exception as exc:
         Path('data/logs').mkdir(parents=True, exist_ok=True)
         with (Path('data/logs/source_errors.log')).open('a', encoding='utf-8') as log: log.write(f'{datetime.now(timezone.utc).isoformat()} object={object_id} osm: {exc}\n')
