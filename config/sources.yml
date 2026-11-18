@@ -1,0 +1,12 @@
+﻿territory:
+  city: "Псков"
+  region: "Псковская область"
+freshness:
+  technical: 730
+  legal: 365
+  urban: 730
+  investment: 180
+  coordinates: 1095
+spatial:
+  infrastructure_radius_m: 500
+  tourism_radius_m: 1000

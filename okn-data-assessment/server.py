@@ -11,7 +11,7 @@ import html
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).parent))
-from core import normalize, calculate, audit, priority_table, save_snapshot, fetch_mkrf_dataset
+from core import normalize, calculate, audit, priority_table, save_snapshot, fetch_mkrf_dataset, load_sources, collect_sources, filter_pskov_city
 
 def load_data():
     files = [ROOT / 'data/processed/egrkn_pskov_filtered.csv'] + sorted((ROOT / 'data/raw').glob('*.csv'), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -19,7 +19,7 @@ def load_data():
         try:
             frame = normalize(pd.read_csv(path))
             valid = frame['object_id'].astype(str).str.strip().ne('') & frame['name'].astype(str).str.strip().ne('')
-            if len(frame) and valid.any(): return frame
+            if len(frame) and valid.any(): return filter_pskov_city(frame)
         except Exception: continue
     return normalize(pd.DataFrame())
 
@@ -64,6 +64,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         if route == '/api/catalog':
             df=load_data(); self.send_json({'records':df.fillna('').to_dict('records'),'audit':audit(df),'calculated':calculate(df).fillna('').to_dict('records')}); return
+        if route == '/api/sources':
+            self.send_json({'sources': load_sources()}); return
         if route in ('/','/dashboard.html','/object.html'):
             path=ROOT/('object.html' if route == '/object.html' else 'dashboard.html'); body=path.read_bytes() if path.exists() else b'<h1>Dashboard not built</h1>'
             self.send_response(200); self.send_header('Content-Type','text/html; charset=utf-8'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
@@ -76,6 +78,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'rows':result.fillna('').to_dict('records')}); return
             if self.path == '/api/refresh/egrkn':
                 rows,name,total=fetch_mkrf_dataset(); save_snapshot(rows,prefix='egrkn_pskov'); self.send_json({'source_file':name,'total':total,'selected':len(rows)}); return
+            if self.path == '/api/refresh/sources':
+                rows, statuses = collect_sources()
+                self.send_json({'records': len(rows), 'statuses': statuses, 'calculated': calculate(rows).fillna('').to_dict('records')}); return
             self.send_json({'error':'Не найдено'},404)
         except Exception as exc: self.send_json({'error':str(exc)},400)
 

@@ -1,0 +1,7 @@
+2026-11-18T17:58:13.884857+00:00 pskov_museum: HTTPSConnectionPool(host='okn.pskov.ru', port=443): Read timed out. (read timeout=30)
+2026-11-18T17:58:45.886139+00:00 osm: HTTPSConnectionPool(host='overpass-api.de', port=443): Read timed out. (read timeout=30)
+2026-11-18T17:58:46.399613+00:00 zakupki: HTTPSConnectionPool(host='zakupki.gov.ru', port=443): Max retries exceeded with url: / (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain (_ssl.c:1147)')))
+2026-11-18T17:58:46.761363+00:00 torgi: HTTPSConnectionPool(host='torgi.gov.ru', port=443): Max retries exceeded with url: / (Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1147)')))
+2026-11-18T18:20:49.807523+00:00 object=611210001500006 osm: 406 Client Error: Not Acceptable for url: https://overpass-api.de/api/interpreter
+2026-11-18T18:21:10.289709+00:00 object=611210001500006 osm: 502 Server Error: Bad Gateway for url: https://overpass-api.de/api/interpreter
+2026-11-18T18:28:21.151438+00:00 object=611210001500006 osm: HTTPSConnectionPool(host='overpass.kumi.systems', port=443): Read timed out. (read timeout=15)
